@@ -1,0 +1,39 @@
+sudo tee /tmp/cloudflared-install.sh > /dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+HOSTNAME="ssh.rootcrypt.com"
+ARCH=$(uname -m)
+if [ "$ARCH" = "armv7l" ] || [ "$ARCH" = "armv6l" ]; then
+  URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm"
+elif [ "$ARCH" = "aarch64" ]; then
+  URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
+else
+  echo "Arquitetura $ARCH não esperada — ajuste manualmente o binário."; exit 1
+fi
+wget -q "$URL" -O /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+cloudflared --version || { echo "cloudflared falhou"; exit 1; }
+echo ">>> Abrirá uma URL para login na Cloudflare. Faça login e escolha seu domínio."
+cloudflared tunnel login
+TUNNEL_NAME="meu-ssh"
+cloudflared tunnel create $TUNNEL_NAME
+CRED_JSON=$(ls -1t ~/.cloudflared/*.json 2>/dev/null | head -n1)
+if [ -z "$CRED_JSON" ]; then
+  echo "Arquivo de credenciais não encontrado em ~/.cloudflared — verifique se o 'tunnel create' funcionou."; exit 1
+fi
+mkdir -p ~/.cloudflared
+cat > ~/.cloudflared/config.yml <<EOF2
+tunnel: $TUNNEL_NAME
+credentials-file: $CRED_JSON
+
+ingress:
+  - hostname: $HOSTNAME
+    service: ssh://localhost:22
+  - service: http_status:404
+EOF2
+cloudflared tunnel route dns $TUNNEL_NAME $HOSTNAME || true
+sudo cloudflared service install || true
+sudo systemctl enable --now cloudflared || true
+cloudflared tunnel list
+EOF
+sudo bash /tmp/cloudflared-install.sh
